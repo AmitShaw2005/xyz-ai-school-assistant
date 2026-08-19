@@ -62,21 +62,20 @@ export function AssistantDashboard() {
   const summary = useMemo(() => role === 'Principal' ? [{ icon: Activity, label: 'Today’s attendance', value: '91.8%' }, { icon: UsersRound, label: 'Students present', value: '1,248' }, { icon: Bell, label: 'Needs attention', value: '08' }] : role === 'Teacher' ? [{ icon: ClipboardCheck, label: 'Present today', value: '28 / 30' }, { icon: UsersRound, label: 'Class average', value: '94.1%' }, { icon: Bell, label: 'Pending notes', value: '04' }] : [{ icon: ClipboardCheck, label: person.metricLabel, value: person.metric }, { icon: BookOpen, label: 'Next class', value: 'Mathematics' }, { icon: Bell, label: 'Notifications', value: '03' }], [role, person.metric, person.metricLabel])
 
   function chooseRole(next: Role) { setRole(next); setMessages(seeded[next]); setShowRoles(false); setInput('') }
-  function submit(text = input) {
+  async function submit(text = input) {
     const clean = text.trim(); if (!clean || processing) return
-    setInput(''); setProcessing(true); setMessages((current) => [...current, { from: 'user', text: clean }])
-    window.setTimeout(() => {
-      const lower = clean.toLowerCase()
-      let reply: Message
-      if (lower.includes('ignore') || lower.includes('every student') || lower.includes('system prompt')) reply = { from: 'ai', text: 'I can only provide information that your account is authorized to access.', tone: 'warning' }
-      else if (role === 'Student' && lower.includes('attendance')) reply = { from: 'ai', text: `You have ${person.metric} attendance this term. That’s a strong start — keep it up!`, tool: 'Attendance record · Access verified' }
-      else if (role === 'Parent' && lower.includes('attendance')) reply = { from: 'ai', text: 'Aarav has 92.4% attendance this term across 83 school days. Would you like to check Anaya’s record too?', tool: 'Linked child · Aarav Mehta' }
-      else if (role === 'Teacher' && (lower.includes('mark') || lower.includes('absent'))) reply = { from: 'ai', text: 'I found Rahul Sharma in Class 10-A. Should I mark him absent for today?', tool: 'Permission verified · Confirmation required', tone: 'warning' }
-      else if (role === 'Principal' && lower.includes('attendance')) reply = { from: 'ai', text: 'Overall attendance is 91.8% today. Class 10 leads at 95.2%, while Class 8 may need a follow-up at 87.6%.', tool: 'School analytics · Management access verified' }
-      else if (lower.includes('teacher') || lower.includes('talk')) reply = { from: 'ai', text: 'Of course. Would you like me to request a call with the teacher? I’ll only submit the request after your confirmation.', tool: 'Escalation request · Confirmation required', tone: 'warning' }
-      else reply = { from: 'ai', text: language === 'Hindi' ? 'मैं आपकी सहायता के लिए यहाँ हूँ। कृपया अपना प्रश्न बताएं।' : `I’m here to help, ${person.name.split(' ')[0]}. You can ask me about attendance, classes, or support.` }
-      setMessages((current) => [...current, reply]); setProcessing(false)
-    }, 850)
+    const nextMessages = [...messages, { from: 'user' as const, text: clean }]
+    setInput(''); setProcessing(true); setMessages(nextMessages)
+    try {
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role, language, messages: nextMessages.map((message) => ({ role: message.from === 'ai' ? 'assistant' : 'user', content: message.text })) }) })
+      if (!response.ok) throw new Error('Chat service unavailable')
+      const contentType = response.headers.get('content-type') ?? ''
+      const payload = contentType.includes('text/plain') ? await response.text() : await response.json()
+      const replyText = typeof payload === 'string' ? payload : payload.response ?? payload.message ?? payload.content
+      setMessages((current) => [...current, { from: 'ai', text: replyText || 'I received your request, but the assistant returned an empty response.' }])
+    } catch {
+      setMessages((current) => [...current, { from: 'ai', text: 'I could not reach the school assistant service. Please try again or request human support.', tone: 'warning' }])
+    } finally { setProcessing(false) }
   }
   function voice() { if (listening) { setListening(false); setProcessing(true); window.setTimeout(() => { setProcessing(false); submit(role === 'Parent' ? 'How much attendance does my child have?' : 'What is my attendance?') }, 650) } else setListening(true) }
 
